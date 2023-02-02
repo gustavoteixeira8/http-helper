@@ -3,27 +3,149 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
-type DefaultHttpFunc[OUT any] func(w http.ResponseWriter, r *http.Request) (OUT, error)
+// TODO: implementar possibilidade de adicionar middlewares
+
+/* ------------------------------------------------------- */
+
+type Ctx struct {
+	// TODO: implementar a partir de um header http
+	// IP             string
+	// IPs            []string
+	request         *http.Request
+	responseWriter  http.ResponseWriter
+	shouldIGoToNext bool
+}
+
+func (c *Ctx) Body() ([]byte, error) {
+	bodyBytes, err := io.ReadAll(c.request.Body)
+	defer c.request.Body.Close()
+
+	return bodyBytes, err
+}
+
+func (c *Ctx) Path() string {
+	return c.request.URL.Path
+}
+
+func (c *Ctx) Header() http.Header {
+	return c.request.Header
+}
+
+func (c *Ctx) Host() string {
+	return c.request.Host
+}
+
+func (c *Ctx) Method() string {
+	return c.request.Method
+}
+
+func (c *Ctx) Proto() string {
+	return c.request.Proto
+}
+
+func (c *Ctx) MultipartForm() multipart.Form {
+	return *c.request.MultipartForm
+}
+
+func (c Ctx) JSON(value any) error {
+	return json.NewEncoder(c.responseWriter).Encode(value)
+}
+
+func (c *Ctx) AddCookie(cookies ...*http.Cookie) *Ctx {
+	for _, cookie := range cookies {
+		c.request.AddCookie(cookie)
+	}
+
+	return c
+}
+
+func (c *Ctx) Status(status int) *Ctx {
+	c.responseWriter.WriteHeader(status)
+	return c
+}
+
+func (c *Ctx) GetRootRequest() *http.Request {
+	return c.request
+}
+
+func (c *Ctx) Cookies() []*http.Cookie {
+	return c.request.Cookies()
+}
+
+func (c *Ctx) Cookie(name string) (*http.Cookie, error) {
+	return c.request.Cookie(name)
+}
+
+func (c *Ctx) UserAgent() string {
+	return c.request.UserAgent()
+}
+
+func (c *Ctx) Redirect(url string, statusCode ...int) {
+	if len(statusCode) == 0 {
+		statusCode = append(statusCode, http.StatusMovedPermanently)
+	}
+	http.Redirect(c.responseWriter, c.request, url, statusCode[0])
+}
+
+func (c *Ctx) Query() url.Values {
+	return c.request.URL.Query()
+}
+
+func (c *Ctx) Params() map[string]string {
+	params := map[string]string{}
+
+	for key, value := range c.request.Header {
+		if strings.Contains(key, "param:") && len(value) > 0 {
+			key = strings.TrimPrefix(key, "param:")
+			params[key] = value[0]
+		}
+	}
+
+	return params
+}
+
+func (c *Ctx) Next() error {
+	c.shouldIGoToNext = true
+	return nil
+}
+
+func (c *Ctx) setNextToFalse() {
+	c.shouldIGoToNext = false
+}
+
+func (c *Ctx) GetShouldIGoToNext() bool {
+	return c.shouldIGoToNext
+}
+
+func NewCtx(w http.ResponseWriter, r *http.Request) *Ctx {
+	return &Ctx{request: r, responseWriter: w}
+}
+
+/* ------------------------------------------------------- */
+
+type DefaultHttpFunc func(c *Ctx) error
 
 type Server struct {
 	rootHandler *http.ServeMux
-	routes      map[string]map[string]DefaultHttpFunc[any]
+	routes      map[string]map[string][]DefaultHttpFunc
 }
 
 func (s Server) GetRootHandler() *http.ServeMux {
 	return s.rootHandler
 }
 
-func (s *Server) Handle(path, method string, callback DefaultHttpFunc[any]) {
+func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
 	rootHttpFunc := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/json")
 
 		var (
-			out any
 			err error
 		)
 
@@ -37,7 +159,20 @@ func (s *Server) Handle(path, method string, callback DefaultHttpFunc[any]) {
 				_, okWithPath := routePaths[path]
 
 				if okWithPathFormatted || okWithPath {
-					out, err = routePaths[path](w, r)
+					ctx := NewCtx(w, r)
+
+					for _, c := range routePaths[path] {
+						ctx.setNextToFalse()
+						err = c(ctx)
+						if err != nil {
+							ctx.Status(http.StatusInternalServerError).JSON(err.Error())
+							return
+						}
+						if !ctx.GetShouldIGoToNext() {
+							return
+						}
+					}
+
 					foundPath = true
 					break
 				}
@@ -55,12 +190,10 @@ func (s *Server) Handle(path, method string, callback DefaultHttpFunc[any]) {
 			json.NewEncoder(w).Encode(err.Error())
 			return
 		}
-
-		json.NewEncoder(w).Encode(out)
 	})
 
 	if s.routes[method][path] == nil && len(s.routes[method]) <= 0 {
-		s.routes[method] = make(map[string]DefaultHttpFunc[any])
+		s.routes[method] = make(map[string][]DefaultHttpFunc)
 	}
 
 	pathFormatted := s.formatPathSlash(path)
@@ -158,7 +291,7 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for key, param := range routeParams {
-		r.Header.Set(key, param)
+		r.Header.Add(fmt.Sprintf("param:%s", key), param)
 	}
 
 	if correctPath == "" {
@@ -173,7 +306,7 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func NewServer(handler *http.ServeMux) *Server {
-	routes := map[string]map[string]DefaultHttpFunc[any]{}
+	routes := map[string]map[string][]DefaultHttpFunc{}
 
 	return &Server{rootHandler: handler, routes: routes}
 }
