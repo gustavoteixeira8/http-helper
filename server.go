@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 )
 
@@ -16,6 +17,18 @@ type Ctx struct {
 	request         *http.Request
 	responseWriter  http.ResponseWriter
 	shouldIGoToNext bool
+	localsVar       map[string]any
+}
+
+func (c *Ctx) Locals(key string, value ...any) any {
+	localVar, ok := c.localsVar[key]
+
+	if ok && reflect.ValueOf(value).IsZero() {
+		return localVar
+	}
+
+	c.localsVar[key] = value[0]
+	return value
 }
 
 func (c *Ctx) Body() ([]byte, error) {
@@ -120,7 +133,8 @@ func (c *Ctx) getShouldIGoToNext() bool {
 }
 
 func NewCtx(w http.ResponseWriter, r *http.Request) *Ctx {
-	return &Ctx{request: r, responseWriter: w}
+	locals := map[string]any{}
+	return &Ctx{request: r, responseWriter: w, localsVar: locals}
 }
 
 /* ------------------------------------------------------- */

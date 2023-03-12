@@ -21,33 +21,26 @@ func main() {
 
 	func1 := func(ctx *myserver.Ctx) error {
 		// fmt.Println(ctx.Params())
-		return ctx.Status(200).JSON("FUNC1")
+		return ctx.Status(200).JSON(fmt.Sprintf("FUNC1 %v", ctx.Locals("KEY")))
 	}
 
-	func2 := func(ctx *myserver.Ctx) error {
-		fmt.Println("ROUTE MID")
-		return ctx.Next()
+	func2 := func(c *myserver.Ctx) error {
+		return c.Status(200).JSON(fmt.Sprintf("FUNC2 %v", c.Locals("KEY")))
 	}
 
 	middleware := func(ctx *myserver.Ctx) error {
-		fmt.Println("MIDDLEWARE QUE PASSA EM TODAS AS REQUESTS")
-		if ctx.Params()["id"] != "123456" {
-			return ctx.Status(400).JSON("bad request bro from mid")
-		}
-
-		// ctx.Status(500).JSON("não vou passar para o próximo handler")
+		ctx.Locals("KEY", "VALUE 1")
 		return ctx.Next()
 	}
 
-	server.Handle("/func1", GET, func1)
-	server.Use(middleware)
-	server.Handle("/func2/{id}", GET, func2, func(c *myserver.Ctx) error {
-		return c.Status(200).JSON("ROUTE END")
-	})
+	middleware2 := func(ctx *myserver.Ctx) error {
+		ctx.Locals("KEY", "VALUE 2")
+		return ctx.Next()
+	}
 
-	server.Handle("/func2/{id}", POST, func2, func(c *myserver.Ctx) error {
-		return c.Status(200).JSON("ROUTE POST END")
-	})
+	server.Handle("/func1", GET, middleware, func1)
+	// server.Use(middleware)
+	server.Handle("/func2", GET, middleware2, func2)
 
 	log.Fatalln(http.ListenAndServe(":3000", server))
 }
