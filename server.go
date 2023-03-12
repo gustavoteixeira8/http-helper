@@ -10,14 +10,9 @@ import (
 	"strings"
 )
 
-// TODO: implementar possibilidade de adicionar middlewares
-
 /* ------------------------------------------------------- */
 
 type Ctx struct {
-	// TODO: implementar a partir de um header http
-	// IP             string
-	// IPs            []string
 	request         *http.Request
 	responseWriter  http.ResponseWriter
 	shouldIGoToNext bool
@@ -120,7 +115,7 @@ func (c *Ctx) setNextToFalse() {
 	c.shouldIGoToNext = false
 }
 
-func (c *Ctx) GetShouldIGoToNext() bool {
+func (c *Ctx) getShouldIGoToNext() bool {
 	return c.shouldIGoToNext
 }
 
@@ -135,10 +130,15 @@ type DefaultHttpFunc func(c *Ctx) error
 type Server struct {
 	rootHandler *http.ServeMux
 	routes      map[string]map[string][]DefaultHttpFunc
+	middlewares []DefaultHttpFunc
 }
 
 func (s Server) GetRootHandler() *http.ServeMux {
 	return s.rootHandler
+}
+
+func (s *Server) Use(middlewares ...DefaultHttpFunc) {
+	s.middlewares = append(s.middlewares, middlewares...)
 }
 
 func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
@@ -168,7 +168,7 @@ func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
 							ctx.Status(http.StatusInternalServerError).JSON(err.Error())
 							return
 						}
-						if !ctx.GetShouldIGoToNext() {
+						if !ctx.getShouldIGoToNext() {
 							return
 						}
 					}
@@ -198,13 +198,14 @@ func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
 
 	pathFormatted := s.formatPathSlash(path)
 
+	s.routes[method][path] = append(s.routes[method][path], s.middlewares...)
+	s.routes[method][pathFormatted] = append(s.routes[method][pathFormatted], s.middlewares...)
+
 	for routeMethod, routePaths := range s.routes {
 		_, ok := routePaths[path]
-		if ok {
-			if routeMethod != method {
-				s.routes[method][path] = callback
-				s.routes[method][pathFormatted] = callback
-			}
+		if ok && routeMethod != method {
+			s.routes[method][path] = append(s.routes[method][path], callback...)
+			s.routes[method][pathFormatted] = append(s.routes[method][pathFormatted], callback...)
 			return
 		}
 	}
@@ -212,8 +213,8 @@ func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
 	s.rootHandler.Handle(path, rootHttpFunc)
 	s.rootHandler.Handle(pathFormatted, rootHttpFunc)
 
-	s.routes[method][path] = callback
-	s.routes[method][pathFormatted] = callback
+	s.routes[method][path] = append(s.routes[method][path], callback...)
+	s.routes[method][pathFormatted] = append(s.routes[method][pathFormatted], callback...)
 }
 
 func (s Server) formatPathSlash(path string) string {

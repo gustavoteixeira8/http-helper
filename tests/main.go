@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
@@ -20,38 +21,33 @@ func main() {
 
 	func1 := func(ctx *myserver.Ctx) error {
 		// fmt.Println(ctx.Params())
-		return ctx.Status(200).JSON(map[string]string{"id": "1234me", "name": "Gustavo Teixeira"})
+		return ctx.Status(200).JSON("FUNC1")
 	}
 
 	func2 := func(ctx *myserver.Ctx) error {
+		fmt.Println("ROUTE MID")
+		return ctx.Next()
+	}
+
+	middleware := func(ctx *myserver.Ctx) error {
+		fmt.Println("MIDDLEWARE QUE PASSA EM TODAS AS REQUESTS")
 		if ctx.Params()["id"] != "123456" {
-			return ctx.Status(400).JSON("bad request bro")
+			return ctx.Status(400).JSON("bad request bro from mid")
 		}
 
+		// ctx.Status(500).JSON("não vou passar para o próximo handler")
 		return ctx.Next()
 	}
 
-	func3 := func(ctx *myserver.Ctx) error {
-		if ctx.Params()["token"] != "token-123456" {
-			return ctx.Status(400).JSON("bad token bro")
-		}
+	server.Handle("/func1", GET, func1)
+	server.Use(middleware)
+	server.Handle("/func2/{id}", GET, func2, func(c *myserver.Ctx) error {
+		return c.Status(200).JSON("ROUTE END")
+	})
 
-		return ctx.Next()
-	}
-
-	server.Handle("/user/me/{id}/{token}", GET, func2, func3, func1)
-
-	// server.Handle("/test", GET, func(ctx *myserver.Ctx) error {
-	// 	return ctx.Status(200).JSON(ctx.Path())
-	// })
-
-	// server.Handle("/user/", POST, func(w http.ResponseWriter, r *http.Request) (any, error) {
-	// 	return "CREATE USER", nil
-	// })
-
-	// server.Handle("/user/{id}/{token}", PUT, func(w http.ResponseWriter, r *http.Request) (any, error) {
-	// 	return "UPDATE USER", nil
-	// })
+	server.Handle("/func2/{id}", POST, func2, func(c *myserver.Ctx) error {
+		return c.Status(200).JSON("ROUTE POST END")
+	})
 
 	log.Fatalln(http.ListenAndServe(":3000", server))
 }
