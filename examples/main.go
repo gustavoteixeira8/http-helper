@@ -20,8 +20,8 @@ func main() {
 	server := myserver.NewServer(http.NewServeMux())
 
 	func1 := func(ctx *myserver.Ctx) error {
-		// fmt.Println(ctx.Params())
-		return ctx.Status(200).JSON(fmt.Sprintf("FUNC1 %v", ctx.Locals("KEY")))
+		// ctx.Params()
+		return ctx.Status(200).JSON(map[string]any{"name": "gustavo"})
 	}
 
 	func2 := func(c *myserver.Ctx) error {
@@ -38,9 +38,11 @@ func main() {
 		return ctx.Next()
 	}
 
-	server.Handle("/func1", GET, middleware, func1)
+	server.Handle(GET, "/func1/{id}/{username}", middleware, func1)
 	// server.Use(middleware)
-	server.Handle("/func2", GET, middleware2, func2)
+	server.Handle(GET, "/func2", middleware2, func2)
+
+	server.ServeStatic("/static", &myserver.StaticOpts{Path: "./static"})
 
 	log.Fatalln(http.ListenAndServe(":3000", server))
 }

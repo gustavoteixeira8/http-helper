@@ -1,143 +1,47 @@
 package server
 
 import (
+	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"mime/multipart"
+	"mime"
 	"net/http"
-	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 )
 
-/* ------------------------------------------------------- */
-
-type Ctx struct {
-	request         *http.Request
-	responseWriter  http.ResponseWriter
-	shouldIGoToNext bool
-	localsVar       map[string]any
+var builtinMimeTypesLower = map[string]string{
+	".css":  "text/css; charset=utf-8",
+	".gif":  "image/gif",
+	".htm":  "text/html; charset=utf-8",
+	".html": "text/html; charset=utf-8",
+	".jpg":  "image/jpeg",
+	".js":   "application/javascript",
+	".wasm": "application/wasm",
+	".pdf":  "application/pdf",
+	".png":  "image/png",
+	".svg":  "image/svg+xml",
+	".xml":  "text/xml; charset=utf-8",
 }
 
-func (c *Ctx) Locals(key string, value ...any) any {
-	localVar, ok := c.localsVar[key]
+const (
+	MethodServeStatic = "FILESERVER"
+)
 
-	if ok && reflect.ValueOf(value).IsZero() {
-		return localVar
+func Mime(ext string) string {
+	if v, ok := builtinMimeTypesLower[ext]; ok {
+		return v
 	}
-
-	c.localsVar[key] = value[0]
-	return value
+	return mime.TypeByExtension(ext)
 }
 
-func (c *Ctx) Body() ([]byte, error) {
-	bodyBytes, err := io.ReadAll(c.request.Body)
-	defer c.request.Body.Close()
-
-	return bodyBytes, err
+type StaticOpts struct {
+	Path        string
+	EmbedFolder embed.FS
 }
-
-func (c *Ctx) Path() string {
-	return c.request.URL.Path
-}
-
-func (c *Ctx) Header() http.Header {
-	return c.request.Header
-}
-
-func (c *Ctx) Host() string {
-	return c.request.Host
-}
-
-func (c *Ctx) Method() string {
-	return c.request.Method
-}
-
-func (c *Ctx) Proto() string {
-	return c.request.Proto
-}
-
-func (c *Ctx) MultipartForm() multipart.Form {
-	return *c.request.MultipartForm
-}
-
-func (c Ctx) JSON(value any) error {
-	return json.NewEncoder(c.responseWriter).Encode(value)
-}
-
-func (c *Ctx) AddCookie(cookies ...*http.Cookie) *Ctx {
-	for _, cookie := range cookies {
-		c.request.AddCookie(cookie)
-	}
-
-	return c
-}
-
-func (c *Ctx) Status(status int) *Ctx {
-	c.responseWriter.WriteHeader(status)
-	return c
-}
-
-func (c *Ctx) GetRootRequest() *http.Request {
-	return c.request
-}
-
-func (c *Ctx) Cookies() []*http.Cookie {
-	return c.request.Cookies()
-}
-
-func (c *Ctx) Cookie(name string) (*http.Cookie, error) {
-	return c.request.Cookie(name)
-}
-
-func (c *Ctx) UserAgent() string {
-	return c.request.UserAgent()
-}
-
-func (c *Ctx) Redirect(url string, statusCode ...int) {
-	if len(statusCode) == 0 {
-		statusCode = append(statusCode, http.StatusMovedPermanently)
-	}
-	http.Redirect(c.responseWriter, c.request, url, statusCode[0])
-}
-
-func (c *Ctx) Query() url.Values {
-	return c.request.URL.Query()
-}
-
-func (c *Ctx) Params() map[string]string {
-	params := map[string]string{}
-
-	for key, value := range c.request.Header {
-		if strings.Contains(key, "param:") && len(value) > 0 {
-			key = strings.TrimPrefix(key, "param:")
-			params[key] = value[0]
-		}
-	}
-
-	return params
-}
-
-func (c *Ctx) Next() error {
-	c.shouldIGoToNext = true
-	return nil
-}
-
-func (c *Ctx) setNextToFalse() {
-	c.shouldIGoToNext = false
-}
-
-func (c *Ctx) getShouldIGoToNext() bool {
-	return c.shouldIGoToNext
-}
-
-func NewCtx(w http.ResponseWriter, r *http.Request) *Ctx {
-	locals := map[string]any{}
-	return &Ctx{request: r, responseWriter: w, localsVar: locals}
-}
-
-/* ------------------------------------------------------- */
 
 type DefaultHttpFunc func(c *Ctx) error
 
@@ -155,10 +59,64 @@ func (s *Server) Use(middlewares ...DefaultHttpFunc) {
 	s.middlewares = append(s.middlewares, middlewares...)
 }
 
-func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
-	rootHttpFunc := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Content-Type", "application/json")
+func (s *Server) ServeStatic(path string, opts *StaticOpts) error {
+	if opts == nil {
+		return errors.New("static opts is required")
+	}
 
+	fileServerCb := func(ctx *Ctx) error {
+		var (
+			fileToServe  []byte
+			err          error
+			absolutePath string
+		)
+
+		path := s.formatPathSlash(strings.Split(ctx.Path(), "?")[0])
+		path = strings.TrimSuffix(path, "/")
+		ext := filepath.Ext(path)
+
+		if ext == "" {
+			path = fmt.Sprintf("%s/index.html", path)
+			ext = filepath.Ext(path)
+		}
+
+		if !reflect.ValueOf(opts.Path).IsZero() {
+
+			if strings.HasPrefix(opts.Path, "./") {
+				path = strings.TrimPrefix(path, "/")
+				path = fmt.Sprintf("./%s", path)
+			}
+
+			absolutePath, err = filepath.Abs(path)
+
+			if err != nil {
+				return ctx.Status(http.StatusInternalServerError).JSON(err.Error())
+			}
+
+			fileToServe, err = os.ReadFile(absolutePath)
+
+		} else if !reflect.ValueOf(opts.EmbedFolder).IsZero() {
+			fileToServe, err = opts.EmbedFolder.ReadFile(path)
+		}
+
+		if err != nil {
+			return ctx.Status(http.StatusNotFound).JSON(fmt.Sprintf("path not found (%v)\n", err))
+		}
+
+		mimeType := Mime(ext)
+
+		ctx.ResponseHeader().Set("Content-Type", mimeType)
+		ctx.Write(fileToServe)
+		return nil
+	}
+
+	s.Handle(MethodServeStatic, path, fileServerCb)
+
+	return nil
+}
+
+func (s *Server) Handle(method, path string, callback ...DefaultHttpFunc) {
+	rootHttpFunc := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var (
 			err error
 		)
@@ -168,7 +126,7 @@ func (s *Server) Handle(path, method string, callback ...DefaultHttpFunc) {
 		foundPath := false
 
 		for routeMethod, routePaths := range s.routes {
-			if routeMethod == r.Method {
+			if routeMethod == r.Method || routeMethod == MethodServeStatic {
 				_, okWithPathFormatted := routePaths[pathFormatted]
 				_, okWithPath := routePaths[path]
 
@@ -269,6 +227,15 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			correctPath = path
 			return
+		}
+
+		dir := filepath.Dir(path)
+
+		for routePath := range s.routes[MethodServeStatic] {
+			if strings.HasPrefix(dir, routePath) {
+				correctPath = path
+				return
+			}
 		}
 
 		for routePath := range s.routes[r.Method] {
