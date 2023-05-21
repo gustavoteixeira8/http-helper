@@ -28,7 +28,7 @@ var builtinMimeTypesLower = map[string]string{
 }
 
 const (
-	MethodServeStatic = "FILESERVER"
+	_MethodServeStatic = "FILESERVER"
 )
 
 func Mime(ext string) string {
@@ -110,12 +110,12 @@ func (s *Server) ServeStatic(path string, opts *StaticOpts) error {
 		return nil
 	}
 
-	s.Handle(MethodServeStatic, path, fileServerCb)
+	s.handle(_MethodServeStatic, path, fileServerCb)
 
 	return nil
 }
 
-func (s *Server) Handle(method, path string, callback ...DefaultHttpFunc) {
+func (s *Server) handle(method, path string, callback ...DefaultHttpFunc) {
 	rootHttpFunc := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var (
 			err error
@@ -126,7 +126,7 @@ func (s *Server) Handle(method, path string, callback ...DefaultHttpFunc) {
 		foundPath := false
 
 		for routeMethod, routePaths := range s.routes {
-			if routeMethod == r.Method || routeMethod == MethodServeStatic {
+			if routeMethod == r.Method || routeMethod == _MethodServeStatic {
 				_, okWithPathFormatted := routePaths[pathFormatted]
 				_, okWithPath := routePaths[path]
 
@@ -231,7 +231,7 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		dir := filepath.Dir(path)
 
-		for routePath := range s.routes[MethodServeStatic] {
+		for routePath := range s.routes[_MethodServeStatic] {
 			if strings.HasPrefix(dir, routePath) {
 				correctPath = path
 				return
@@ -285,6 +285,30 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.URL.Path = correctPath
 
 	s.rootHandler.ServeHTTP(w, r)
+}
+
+func (s *Server) Get(path string, callback ...DefaultHttpFunc) {
+	s.handle(http.MethodGet, path, callback...)
+}
+
+func (s *Server) Options(path string, callback ...DefaultHttpFunc) {
+	s.handle(http.MethodOptions, path, callback...)
+}
+
+func (s *Server) Post(path string, callback ...DefaultHttpFunc) {
+	s.handle(http.MethodGet, path, callback...)
+}
+
+func (s *Server) Put(path string, callback ...DefaultHttpFunc) {
+	s.handle(http.MethodGet, path, callback...)
+}
+
+func (s *Server) Delete(path string, callback ...DefaultHttpFunc) {
+	s.handle(http.MethodGet, path, callback...)
+}
+
+func (s *Server) Patch(path string, callback ...DefaultHttpFunc) {
+	s.handle(http.MethodGet, path, callback...)
 }
 
 func NewServer(handler *http.ServeMux) *Server {

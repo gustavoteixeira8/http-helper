@@ -18,6 +18,10 @@ type Ctx struct {
 }
 
 func (c *Ctx) Locals(key string, value ...any) any {
+	if c.localsVar == nil {
+		c.localsVar = make(map[string]any)
+	}
+
 	localVar, ok := c.localsVar[key]
 
 	if ok && reflect.ValueOf(value).IsZero() {
@@ -25,6 +29,7 @@ func (c *Ctx) Locals(key string, value ...any) any {
 	}
 
 	c.localsVar[key] = value[0]
+
 	return value
 }
 

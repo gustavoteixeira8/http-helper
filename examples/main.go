@@ -38,9 +38,9 @@ func main() {
 		return ctx.Next()
 	}
 
-	server.Handle(GET, "/func1/{id}/{username}", middleware, func1)
+	server.Get("/func1/{id}/{username}", middleware, func1)
 	// server.Use(middleware)
-	server.Handle(GET, "/func2", middleware2, func2)
+	server.Get("/func2", middleware2, func2)
 
 	server.ServeStatic("/static", &myserver.StaticOpts{Path: "./static"})
 
